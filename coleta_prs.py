@@ -78,4 +78,65 @@ def get_comments_counts(repo_full_name, pr_number):
     
     return num_comments, num_review_comments
 
+def process_pr(pr, repo_full_name):
+    try:
+        created = datetime.fromisoformat(pr["created_at"][:-1])
+        closed = datetime.fromisoformat(pr["closed_at"][:-1]) if pr["closed_at"] else None
+        if not closed:
+            return None
 
+        tempo_analise = (closed - created).total_seconds() / 3600
+        if tempo_analise < 1:  
+            return None
+
+        num_files, additions, deletions = get_pr_files(repo_full_name, pr["number"])
+ 
+        num_participants = get_participants(repo_full_name, pr["number"])
+
+        num_comments, num_review_comments = get_comments_counts(repo_full_name, pr["number"])
+
+        return {
+            "id": pr.get("id", 0),
+            "repo": repo_full_name,
+            "state": pr.get("state", ""),
+            "tempo_analise_horas": round(tempo_analise, 2),
+            "descricao_len": len(pr["body"]) if pr.get("body") else 0,
+            "num_comentarios": num_comments,
+            "num_review_comments": num_review_comments,
+            "autor": pr["user"].get("login", "") if pr.get("user") else "",
+            "num_files": num_files,
+            "additions": additions,
+            "deletions": deletions,
+            "num_participants": num_participants
+        }
+    except Exception as e:
+        print(f"Erro ao processar PR: {e}")
+        return None
+
+
+def main():
+    repos = get_top_repositories(200)
+
+    with open("dataset.csv", "w", newline="", encoding="utf-8") as csvfile:
+        fieldnames = [
+            "id", "repo", "state", "tempo_analise_horas", "descricao_len",
+            "num_comentarios", "num_review_comments", "autor",
+            "num_files", "additions", "deletions", "num_participants"
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for repo in repos:
+            repo_name = repo["full_name"]
+            print(f"Coletando PRs do repositório: {repo_name}")
+            prs = get_pull_requests(repo_name, max_prs=50)
+            for pr in prs:
+                dados = process_pr(pr, repo_name)
+                if dados:
+                    writer.writerow(dados)
+            time.sleep(1) 
+
+    print("✅ Coleta concluída! Dados salvos em dataset.csv")
+
+if __name__ == "__main__":
+    main()
