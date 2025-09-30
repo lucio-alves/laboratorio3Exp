@@ -2,16 +2,23 @@ import requests
 import csv
 from datetime import datetime
 import time
+import os
+from dotenv import load_dotenv
 
-TOKEN = "gittoken"  
-HEADERS = {"Authorization": f"token {TOKEN}"}
+# Carrega as variáveis do arquivo .env
+load_dotenv()
+
+TOKEN = os.getenv("GITHUB_TOKEN")
+HEADERS = {"Authorization": f"token {TOKEN}"} if TOKEN else {}
+
 
 def get_top_repositories(top_n=200):
     repos = []
     page = 1
     while len(repos) < top_n:
         url = "https://api.github.com/search/repositories"
-        params = {"q": "stars:>1", "sort": "stars", "order": "desc", "per_page": 100, "page": page}
+        params = {"q": "stars:>1", "sort": "stars",
+                  "order": "desc", "per_page": 100, "page": page}
         response = requests.get(url, headers=HEADERS, params=params)
         if response.status_code != 200:
             print("Erro ao buscar repositórios:", response.status_code)
@@ -19,7 +26,7 @@ def get_top_repositories(top_n=200):
         data = response.json()
         repos.extend(data.get("items", []))
         page += 1
-        time.sleep(1)  
+        time.sleep(1)
     return repos[:top_n]
 
 
@@ -28,7 +35,8 @@ def get_pull_requests(repo_full_name, max_prs=50):
     params = {"state": "closed", "per_page": max_prs}
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
-        print(f"Erro ao coletar PRs de {repo_full_name}: {response.status_code}")
+        print(
+            f"Erro ao coletar PRs de {repo_full_name}: {response.status_code}")
         return []
     return response.json()
 
@@ -47,7 +55,7 @@ def get_pr_files(repo_full_name, pr_number):
 
 def get_participants(repo_full_name, pr_number):
     participants = set()
-    
+
     url_comments = f"https://api.github.com/repos/{repo_full_name}/issues/{pr_number}/comments"
     comments_resp = requests.get(url_comments, headers=HEADERS)
     if comments_resp.status_code == 200:
@@ -71,29 +79,33 @@ def get_comments_counts(repo_full_name, pr_number):
         return 0, 0
     issue_data = resp.json()
     num_comments = issue_data.get("comments", 0)
-    
+
     url_reviews = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/reviews"
     r = requests.get(url_reviews, headers=HEADERS)
     num_review_comments = len(r.json()) if r.status_code == 200 else 0
-    
+
     return num_comments, num_review_comments
+
 
 def process_pr(pr, repo_full_name):
     try:
         created = datetime.fromisoformat(pr["created_at"][:-1])
-        closed = datetime.fromisoformat(pr["closed_at"][:-1]) if pr["closed_at"] else None
+        closed = datetime.fromisoformat(
+            pr["closed_at"][:-1]) if pr["closed_at"] else None
         if not closed:
             return None
 
         tempo_analise = (closed - created).total_seconds() / 3600
-        if tempo_analise < 1:  
+        if tempo_analise < 1:
             return None
 
-        num_files, additions, deletions = get_pr_files(repo_full_name, pr["number"])
- 
+        num_files, additions, deletions = get_pr_files(
+            repo_full_name, pr["number"])
+
         num_participants = get_participants(repo_full_name, pr["number"])
 
-        num_comments, num_review_comments = get_comments_counts(repo_full_name, pr["number"])
+        num_comments, num_review_comments = get_comments_counts(
+            repo_full_name, pr["number"])
 
         return {
             "id": pr.get("id", 0),
@@ -134,9 +146,10 @@ def main():
                 dados = process_pr(pr, repo_name)
                 if dados:
                     writer.writerow(dados)
-            time.sleep(1) 
+            time.sleep(1)
 
     print("✅ Coleta concluída! Dados salvos em dataset.csv")
+
 
 if __name__ == "__main__":
     main()

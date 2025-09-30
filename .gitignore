@@ -1,0 +1,27 @@
+# Arquivo de ambiente (contém tokens e credenciais)
+.env
+
+# Ambientes virtuais
+venv/
+env/
+ENV/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

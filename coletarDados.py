@@ -1,9 +1,15 @@
 import requests
 import csv
 import time
+import os
+from dotenv import load_dotenv
 
-TOKEN = ".."
+# Carrega as variáveis do arquivo .env
+load_dotenv()
+
+TOKEN = os.getenv("GITHUB_TOKEN")
 HEADERS = {"Authorization": f"token {TOKEN}"} if TOKEN else {}
+
 
 def get_top_repositories(top_n=200):
     repos = []
@@ -19,7 +25,8 @@ def get_top_repositories(top_n=200):
         }
         response = requests.get(url, headers=HEADERS, params=params)
         if response.status_code != 200:
-            print(" Erro ao buscar repositórios:", response.status_code, response.text)
+            print(" Erro ao buscar repositórios:",
+                  response.status_code, response.text)
             break
 
         data = response.json()
@@ -30,9 +37,11 @@ def get_top_repositories(top_n=200):
 
     return repos[:top_n]
 
+
 def salvar_csv(repos, filename="top200_repositorios.csv"):
     with open(filename, "w", newline="", encoding="utf-8") as csvfile:
-        fieldnames = ["full_name", "html_url", "stargazers_count", "language", "description"]
+        fieldnames = ["full_name", "html_url",
+                      "stargazers_count", "language", "description"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -46,9 +55,11 @@ def salvar_csv(repos, filename="top200_repositorios.csv"):
             })
     print(f" Arquivo '{filename}' criado com sucesso!")
 
+
 def main():
     repos = get_top_repositories(200)
     salvar_csv(repos)
+
 
 if __name__ == "__main__":
     main()
