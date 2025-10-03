@@ -4,12 +4,29 @@ from datetime import datetime
 import time
 import os
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Carrega as variáveis do arquivo .env
+
 load_dotenv()
 
 TOKEN = os.getenv("GITHUB_TOKEN")
-HEADERS = {"Authorization": f"token {TOKEN}"} if TOKEN else {}
+session = requests.Session()
+if TOKEN:
+    session.headers.update({"Authorization": f"token {TOKEN}"})
+
+
+
+def github_request(url, params=None):
+    while True:
+        response = session.get(url, params=params)
+        if response.status_code == 403 and "X-RateLimit-Remaining" in response.headers:
+            
+            reset_time = int(response.headers.get("X-RateLimit-Reset", time.time() + 60))
+            sleep_time = reset_time - int(time.time()) + 1
+            print(f" Rate limit atingido. Dormindo {sleep_time}s...")
+            time.sleep(max(sleep_time, 1))
+            continue  
+        return response
 
 
 def get_top_repositories(top_n=200):
@@ -19,31 +36,41 @@ def get_top_repositories(top_n=200):
         url = "https://api.github.com/search/repositories"
         params = {"q": "stars:>1", "sort": "stars",
                   "order": "desc", "per_page": 100, "page": page}
-        response = requests.get(url, headers=HEADERS, params=params)
+        response = github_request(url, params=params)
         if response.status_code != 200:
             print("Erro ao buscar repositórios:", response.status_code)
             break
         data = response.json()
         repos.extend(data.get("items", []))
         page += 1
-        time.sleep(1)
     return repos[:top_n]
 
 
-def get_pull_requests(repo_full_name, max_prs=50):
-    url = f"https://api.github.com/repos/{repo_full_name}/pulls"
-    params = {"state": "closed", "per_page": max_prs}
-    response = requests.get(url, headers=HEADERS, params=params)
-    if response.status_code != 200:
-        print(
-            f"Erro ao coletar PRs de {repo_full_name}: {response.status_code}")
-        return []
-    return response.json()
+def get_pull_requests(repo_full_name):
+    """Coleta TODOS os PRs fechados (merged + closed sem merge)"""
+    prs = []
+    page = 1
+    while True:
+        url = f"https://api.github.com/repos/{repo_full_name}/pulls"
+        params = {"state": "closed", "per_page": 100, "page": page}
+        response = github_request(url, params=params)
+        if response.status_code != 200:
+            print(f"Erro ao coletar PRs de {repo_full_name}: {response.status_code}")
+            break
+
+        data = response.json()
+        if not data: 
+            break
+
+        prs.extend(data)
+        page += 1
+
+    return prs
 
 
 def get_pr_files(repo_full_name, pr_number):
     url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/files"
-    response = requests.get(url, headers=HEADERS)
+    response = github_request(url)
     if response.status_code != 200:
         return 0, 0, 0
     files = response.json()
@@ -57,14 +84,14 @@ def get_participants(repo_full_name, pr_number):
     participants = set()
 
     url_comments = f"https://api.github.com/repos/{repo_full_name}/issues/{pr_number}/comments"
-    comments_resp = requests.get(url_comments, headers=HEADERS)
+    comments_resp = github_request(url_comments)
     if comments_resp.status_code == 200:
         for c in comments_resp.json():
             if "user" in c and c["user"]:
                 participants.add(c["user"].get("login", ""))
 
     url_reviews = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/reviews"
-    reviews_resp = requests.get(url_reviews, headers=HEADERS)
+    reviews_resp = github_request(url_reviews)
     if reviews_resp.status_code == 200:
         for r in reviews_resp.json():
             if "user" in r and r["user"]:
@@ -74,14 +101,14 @@ def get_participants(repo_full_name, pr_number):
 
 def get_comments_counts(repo_full_name, pr_number):
     url_issue = f"https://api.github.com/repos/{repo_full_name}/issues/{pr_number}"
-    resp = requests.get(url_issue, headers=HEADERS)
+    resp = github_request(url_issue)
     if resp.status_code != 200:
         return 0, 0
     issue_data = resp.json()
     num_comments = issue_data.get("comments", 0)
 
     url_reviews = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/reviews"
-    r = requests.get(url_reviews, headers=HEADERS)
+    r = github_request(url_reviews)
     num_review_comments = len(r.json()) if r.status_code == 200 else 0
 
     return num_comments, num_review_comments
@@ -105,11 +132,7 @@ def process_pr(pr, repo_full_name):
         num_comments, num_review_comments = get_comments_counts(
             repo_full_name, pr["number"])
 
-    
-        if pr.get("merged_at"):
-            state_final = "merged"
-        else:
-            state_final = "closed"
+        state_final = "merged" if pr.get("merged_at") else "closed"
 
         return {
             "id": pr.get("id", 0),
@@ -130,6 +153,15 @@ def process_pr(pr, repo_full_name):
         return None
 
 
+def process_all_prs(repo_name, prs, writer):
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(process_pr, pr, repo_name) for pr in prs]
+        for future in as_completed(futures):
+            dados = future.result()
+            if dados:
+                writer.writerow(dados)
+
+
 def main():
     repos = get_top_repositories(200)
 
@@ -144,13 +176,9 @@ def main():
 
         for repo in repos:
             repo_name = repo["full_name"]
-            print(f"Coletando PRs do repositório: {repo_name}")
-            prs = get_pull_requests(repo_name, max_prs=50)
-            for pr in prs:
-                dados = process_pr(pr, repo_name)
-                if dados:
-                    writer.writerow(dados)
-            time.sleep(1)
+            print(f" Coletando PRs do repositório: {repo_name}")
+            prs = get_pull_requests(repo_name)
+            process_all_prs(repo_name, prs, writer)
 
     print(" Coleta concluída! Dados salvos em dataset.csv")
 
